@@ -6,7 +6,7 @@ const sessionId = "ps-" + Date.now() + "-" + Math.random().toString(36).slice(2)
 const sessionQuery = "?session_id=" + encodeURIComponent(sessionId);
 const completedJobs = new Map();
 const ui = {
-  port: document.getElementById("port"),
+  address: document.getElementById("address"),
   connect: document.getElementById("connect"),
   capture: document.getElementById("capture"),
   snapshot: document.getElementById("snapshot"),
@@ -29,7 +29,7 @@ function renderControls() {
   ui.connect.textContent = connection ? "断开" : "连接";
   ui.connect.disabled = busy;
   ui.capture.disabled = busy || !connection;
-  ui.port.disabled = busy || Boolean(connection);
+  ui.address.disabled = busy || Boolean(connection);
 }
 
 async function request(current, path, { body, binary = false, timeout = 8000 } = {}) {
@@ -59,20 +59,32 @@ async function request(current, path, { body, binary = false, timeout = 8000 } =
   }
 }
 
-function parsePort(value) {
-  const trimmed = String(value || "").trim();
-  const match = /^(?:http:\/\/(?:localhost|127\.0\.0\.1):)?(818[89])\/*$/i.exec(trimmed);
+function parseAddress(value) {
+  let trimmed = String(value || "").trim().replace(/\/+$/, "");
+  if (!trimmed) throw new Error("请输入 ComfyUI 地址，例如 127.0.0.1:8188");
+  if (/^\d{1,5}$/.test(trimmed)) trimmed = "127.0.0.1:" + trimmed;
+  const hasScheme = /^https?:\/\//i.test(trimmed);
+  const rawUrl = hasScheme ? trimmed : "http://" + trimmed;
+  const match = /^(https?):\/\/(\[[0-9a-fA-F:]+\]|[a-zA-Z0-9.-]+):(\d{1,5})$/.exec(rawUrl);
   if (!match) {
-    throw new Error("请输入本地 ComfyUI 端口（8188 或 8189）");
+    throw new Error("地址格式应为 IP:端口，例如 127.0.0.1:8188 或 192.168.1.10:8188");
   }
-  const port = match[1];
-  return { port, endpoint: "http://localhost:" + port };
+  const scheme = match[1].toLowerCase();
+  const host = match[2];
+  const port = Number(match[3]);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("端口范围应为 1–65535");
+  }
+  const hostPort = host + ":" + port;
+  const endpoint = scheme + "://" + hostPort;
+  const display = scheme === "https" ? endpoint : hostPort;
+  return { display, endpoint };
 }
 
 function restorePreferences() {
   try {
-    const saved = localStorage.getItem("port") || localStorage.getItem("endpoint");
-    if (saved && !connection) ui.port.value = parsePort(saved).port;
+    const saved = localStorage.getItem("address") || localStorage.getItem("endpoint") || localStorage.getItem("port");
+    if (saved && !connection) ui.address.value = parseAddress(saved).display;
   } catch (_) {
     // Preference storage is optional. Manual connection is still available.
   }
@@ -91,15 +103,15 @@ async function toggleConnection() {
   renderControls();
   status("正在连接 ComfyUI…");
   try {
-    const current = parsePort(ui.port.value);
+    const current = parseAddress(ui.address.value);
     await request(current, "/health");
-    ui.port.value = current.port;
+    ui.address.value = current.display;
     connection = current;
     pollFailed = false;
     ui.snapshot.textContent = "";
-    status("已连接 · 端口 " + current.port, "good");
+    status("已连接 · " + current.display, "good");
     try {
-      localStorage.setItem("port", current.port);
+      localStorage.setItem("address", current.display);
     } catch (_) {}
   } catch (error) {
     status("连接失败 · " + error.message, "error");
@@ -233,7 +245,7 @@ async function poll() {
   try {
     const { job, capture_request: captureRequest } = await request(current, "/jobs/pending" + sessionQuery + "&capture_requests=1");
     if (!visible || connection !== current || busy) return;
-    if (pollFailed) status("连接已恢复 · 端口 " + current.port, "good");
+    if (pollFailed) status("连接已恢复 · " + current.display, "good");
     pollFailed = false;
     if (captureRequest) {
       await captureCurrentLayer(captureRequest.id);

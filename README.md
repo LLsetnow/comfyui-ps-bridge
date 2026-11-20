@@ -11,11 +11,11 @@
 
 1. 将 `comfyui-nodes/` 整个目录复制到运行 ComfyUI 的机器上，放在 `ComfyUI/custom_nodes/comfyui-ps-bridge/`。确认目标目录直接包含 `__init__.py`。重启 ComfyUI 并刷新浏览器，在节点菜单的 `Photoshop Bridge` 分类中找到三个节点，也可搜索 `PS Bridge`。 [ComfyUI 安装自定义节点](https://docs.comfy.org/installation/install_custom_node)
 2. 启动 Photoshop 25.0 或更新版本，打开 Adobe UXP Developer Tools。首次使用时启用 Developer Mode，点 **Add Plugin** 并选择 `photoshop-bridge/manifest.json`，再点 **Load**。面板关闭后，从 Photoshop 的「增效工具 → ComfyUI PS Bridge → ComfyUI 桥接面板」打开。重启 Photoshop 后，如果菜单里没有这项，可回到 UXP Developer Tools 点 **Load**。 [Adobe 开发者工具设置](https://developer.adobe.com/uxp/guides/how-to/developer-tools/) · [添加插件](https://developer.adobe.com/uxp/guides/how-to/udt-deep-dive/plugin-management) · [加载插件](https://developer.adobe.com/uxp/guides/how-to/udt-deep-dive/plugin-workflows)
-3. 在面板填入本地 ComfyUI 端口（如本机运行填 `8188`，通过本机 AiServer 转发到 `4070win` 填 `8189`），点「连接」即可，无需令牌。
+3. 在面板填入 ComfyUI 的 `IP:端口`（如本机填 `127.0.0.1:8188`，SSH 转发填 `127.0.0.1:8189`，局域网直连填 `192.168.x.x:8188`），点「连接」即可，无需令牌。
 
 拖动浮动桥接面板的边缘或右下角可以调整宽高。停靠时拖动面板区的分隔线。缩矮后可在面板内纵向滚动。
 
-Photoshop 桥接接口仅接受 ComfyUI 主机本机或同一主机的 SSH 转发请求。使用 Photoshop 节点的工作流也要通过这两个入口排队。
+Photoshop 桥接接口允许本机回环、局域网/内网（含 Tailscale 等 `100.64.0.0/10` 网段）及同机 SSH 转发请求。
 
 ## 捕获与选节点
 

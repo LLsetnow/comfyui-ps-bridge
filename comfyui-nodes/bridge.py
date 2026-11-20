@@ -468,6 +468,9 @@ async def _json(request):
     return payload
 
 
+CGNAT_NET = ipaddress.ip_network("100.64.0.0/10")
+
+
 def _host_peer(request):
     transport = request.transport
     if transport is None:
@@ -482,7 +485,13 @@ def _host_peer(request):
         peer_ip = peer_ip.ipv4_mapped or peer_ip
     if isinstance(local_ip, ipaddress.IPv6Address):
         local_ip = local_ip.ipv4_mapped or local_ip
-    return peer_ip.is_loopback or peer_ip == local_ip
+    return (
+        peer_ip.is_loopback
+        or peer_ip.is_private
+        or peer_ip.is_link_local
+        or (isinstance(peer_ip, ipaddress.IPv4Address) and peer_ip in CGNAT_NET)
+        or peer_ip == local_ip
+    )
 
 
 def _browser_peer(request):
@@ -492,11 +501,6 @@ def _browser_peer(request):
         hostname = urlsplit(f"//{request.host}").hostname
         if not hostname:
             return False
-        if hostname.casefold().rstrip(".") != "localhost":
-            host_ip = ipaddress.ip_address(hostname)
-            local = request.transport.get_extra_info("sockname")[0].split("%", 1)[0]
-            if not host_ip.is_loopback and host_ip != ipaddress.ip_address(local):
-                return False
         origin = request.headers.get("Origin")
         if origin is None:
             return True

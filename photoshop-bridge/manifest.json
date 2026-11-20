@@ -19,10 +19,7 @@
   ],
   "requiredPermissions": {
     "network": {
-      "domains": [
-        "http://localhost:8188",
-        "http://localhost:8189"
-      ]
+      "domains": "all"
     }
   }
 }
