@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div class="panel">
+    <div class="panel-content">
+      <label for="port">ComfyUI 端口</label>
+      <input id="port" type="text" value="8188" inputmode="numeric" spellcheck="false">
+      <button id="connect">连接</button>
+      <div class="capture">
+        <button id="capture" disabled>捕获当前图层</button>
+        <p id="snapshot"></p>
+      </div>
+      <p id="status" aria-live="polite">等待连接</p>
+    </div>
+  </div>
+  <script src="png.js"></script>
+  <script src="imaging.js"></script>
+  <script src="bridge.js"></script>
+</body>
+</html>

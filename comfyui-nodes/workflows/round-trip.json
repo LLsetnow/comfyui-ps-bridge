@@ -1,0 +1,64 @@
+{
+  "last_node_id": 3,
+  "last_link_id": 4,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "PSBridgeLoadImage",
+      "pos": [60, 105],
+      "size": [275, 90],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {"name": "image", "type": "IMAGE", "links": [1], "slot_index": 0},
+        {"name": "frame", "type": "PS_BRIDGE_FRAME", "links": [2, 3], "slot_index": 1}
+      ],
+      "properties": {"Node name for S&R": "PSBridgeLoadImage"}
+    },
+    {
+      "id": 2,
+      "type": "PSBridgeLoadMask",
+      "pos": [423, 260],
+      "size": [275, 72],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {"name": "frame", "type": "PS_BRIDGE_FRAME", "link": 2}
+      ],
+      "outputs": [
+        {"name": "mask", "type": "MASK", "links": [4], "slot_index": 0}
+      ],
+      "properties": {"Node name for S&R": "PSBridgeLoadMask"}
+    },
+    {
+      "id": 3,
+      "type": "PSBridgeSaveImage",
+      "pos": [790, 131],
+      "size": [300, 112],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {"name": "image", "type": "IMAGE", "link": 1},
+        {"name": "frame", "type": "PS_BRIDGE_FRAME", "link": 3},
+        {"name": "mask", "type": "MASK", "link": 4}
+      ],
+      "outputs": [],
+      "properties": {"Node name for S&R": "PSBridgeSaveImage"},
+      "widgets_values": ["ComfyUI Round Trip"]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 3, 0, "IMAGE"],
+    [2, 1, 1, 2, 0, "PS_BRIDGE_FRAME"],
+    [3, 1, 1, 3, 1, "PS_BRIDGE_FRAME"],
+    [4, 2, 0, 3, 2, "MASK"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

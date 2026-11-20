@@ -1,0 +1,28 @@
+{
+  "manifestVersion": 5,
+  "id": "com.llsetnow.comfyuipsbridge",
+  "name": "ComfyUI PS Bridge",
+  "version": "0.1.3",
+  "main": "index.html",
+  "host": {"app": "PS", "minVersion": "25.0.0", "apiVersion": 2},
+  "entrypoints": [
+    {
+      "type": "panel",
+      "id": "comfyUiPhotoshopBridgePanel",
+      "label": {"default": "ComfyUI 桥接面板"},
+      "minimumSize": {"width": 160, "height": 128},
+      "maximumSize": {"width": 3840, "height": 2160},
+      "preferredDockedSize": {"width": 290, "height": 340},
+      "preferredFloatingSize": {"width": 320, "height": 340},
+      "icons": [{"width": 23, "height": 23, "path": "icons/bridge.png", "scale": [1, 2], "theme": ["all"]}]
+    }
+  ],
+  "requiredPermissions": {
+    "network": {
+      "domains": [
+        "http://localhost:8188",
+        "http://localhost:8189"
+      ]
+    }
+  }
+}
