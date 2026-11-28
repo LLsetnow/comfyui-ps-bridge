@@ -26,15 +26,10 @@ body {
   padding: 14px;
 }
 
-label {
-  display: block;
-  color: #c8c8c8;
-  font-size: 12px;
-  line-height: 16px;
-  margin-bottom: 4px;
+#address {
+  width: 100%;
 }
 
-input,
 button {
   box-sizing: border-box;
   width: 100%;
@@ -42,13 +37,6 @@ button {
   border: 1px solid #555;
   border-radius: 4px;
   font-size: 13px;
-}
-
-input {
-  margin: 0;
-  padding: 4px 8px;
-  background: #1d1d1d;
-  color: #f1f1f1;
 }
 
 button {

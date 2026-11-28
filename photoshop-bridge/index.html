@@ -7,8 +7,9 @@
 <body>
   <div class="panel">
     <div class="panel-content">
-      <label for="address">ComfyUI 地址 (IP:端口)</label>
-      <input id="address" type="text" value="127.0.0.1:8188" placeholder="127.0.0.1:8188" spellcheck="false">
+      <sp-textfield id="address" type="text" placeholder="127.0.0.1:8188">
+        <sp-label slot="label">ComfyUI 地址 (IP:端口)</sp-label>
+      </sp-textfield>
       <button id="connect">连接</button>
       <div class="capture">
         <button id="capture" disabled>捕获当前图层</button>
