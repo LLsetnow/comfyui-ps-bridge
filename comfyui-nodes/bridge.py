@@ -28,8 +28,8 @@ from .previews import SUBFOLDER as PREVIEW_SUBFOLDER, get_preview
 MAX_PIXELS = 32 * 1024 * 1024
 MAX_UPLOAD = 160 * 1024 * 1024
 MAX_LEGACY_JSON_UPLOAD = 96 * 1024 * 1024
-MAX_CAPTURE_BYTES = 384 * 1024 * 1024
-MAX_RESULT_BYTES = 384 * 1024 * 1024
+MAX_CAPTURE_BYTES = 768 * 1024 * 1024
+MAX_RESULT_BYTES = 512 * 1024 * 1024
 CAPTURE_TTL = 24 * 60 * 60
 RESULT_TTL = 2 * 60 * 60
 PANEL_HEARTBEAT_TTL = 25
@@ -592,7 +592,7 @@ class Bridge:
                         snapshot = self.captures[capture_id]
                         snapshot.expires = now + CAPTURE_TTL
                         # ComfyUI validates the prompt before adding it to its visible queue.
-                        snapshot.retain_until = now + 120
+                        snapshot.retain_until = now + 10
                     node[BINDING_KEY] = [run_id, capture_id]
         return request
 
