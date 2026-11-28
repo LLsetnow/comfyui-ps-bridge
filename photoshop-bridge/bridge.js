@@ -261,42 +261,38 @@ async function applyJob(current, job) {
   const route = "/jobs/" + encodeURIComponent(job.id);
   let layerId = completedJobs.get(job.id);
   if (!layerId) {
+    const size = job.width * job.height;
+    const expectedChannels = job.channels === 3 ? 3 : 4;
+    let pixels;
+    let mask;
+    if (current.supportsJobBundle) {
+      const bundle = await request(current, route + "/bundle" + sessionQuery, { binary: true, timeout: 120000 });
+      if (!visible || current !== connection) return;
+      const decoded = parseDeliveryBundle(bundle, job.width, job.height);
+      pixels = decoded.pixels;
+      mask = decoded.mask;
+    } else {
+      const [rawPixels, rawMask] = await Promise.all([
+        request(current, route + "/pixels" + sessionQuery, { binary: true, timeout: 120000 }),
+        request(current, route + "/mask" + sessionQuery, { binary: true, timeout: 120000 })
+      ]);
+      if (!visible || current !== connection) return;
+      if (rawPixels.length !== size * expectedChannels || rawMask.length !== size) {
+        throw new Error("回贴的图像或蒙版数据长度不符");
+      }
+      pixels = rawPixels;
+      mask = rawMask;
+    }
+
+    // Photoshop document access must run inside executeAsModal. importPhotoshop
+    // validates the target document in that scope before creating any layers.
     let targetError;
     try {
-      assertTargetDocument(job);
+      layerId = await importPhotoshop(job, pixels, mask);
     } catch (error) {
+      // Modal collisions and cancellation can be retried without a layer.
+      if (Number(error.number) === 9 || Number(error.number) === -128) throw error;
       targetError = error;
-    }
-    if (!targetError) {
-      const size = job.width * job.height;
-      const expectedChannels = job.channels === 3 ? 3 : 4;
-      let pixels;
-      let mask;
-      if (current.supportsJobBundle) {
-        const bundle = await request(current, route + "/bundle" + sessionQuery, { binary: true, timeout: 120000 });
-        if (!visible || current !== connection) return;
-        const decoded = parseDeliveryBundle(bundle, job.width, job.height);
-        pixels = decoded.pixels;
-        mask = decoded.mask;
-      } else {
-        const [rawPixels, rawMask] = await Promise.all([
-          request(current, route + "/pixels" + sessionQuery, { binary: true, timeout: 120000 }),
-          request(current, route + "/mask" + sessionQuery, { binary: true, timeout: 120000 })
-        ]);
-        if (!visible || current !== connection) return;
-        if (rawPixels.length !== size * expectedChannels || rawMask.length !== size) {
-          throw new Error("回贴的图像或蒙版数据长度不符");
-        }
-        pixels = rawPixels;
-        mask = rawMask;
-      }
-      try {
-        layerId = await importPhotoshop(job, pixels, mask);
-      } catch (error) {
-        // Modal collisions and cancellation can be retried without a layer.
-        if (Number(error.number) === 9 || Number(error.number) === -128) throw error;
-        targetError = error;
-      }
     }
     if (targetError) {
       await request(current, route + "/error", { body: { session_id: sessionId, error: targetError.message } });
