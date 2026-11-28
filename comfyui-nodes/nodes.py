@@ -150,6 +150,25 @@ def capture_preview(capture, kind):
     raise ValueError("Unknown Photoshop preview type.")
 
 
+class PSBridgeLayerName:
+    CATEGORY = CATEGORY
+    DESCRIPTION = "Set the name for the layer returned to Photoshop."
+    FUNCTION = "get_layer_name"
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("layer_name",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "text": ("STRING", {"default": "ComfyUI Result", "multiline": True}),
+            },
+        }
+
+    def get_layer_name(self, text):
+        return (text,)
+
+
 class PSBridgeLoadImage:
     CATEGORY = CATEGORY
     DESCRIPTION = "Load pixels within the captured selection, or the whole active layer when there is no selection."
@@ -262,12 +281,14 @@ class PSBridgeSaveImage:
 
 
 NODE_CLASS_MAPPINGS = {
+    "PSBridgeLayerName": PSBridgeLayerName,
     "PSBridgeLoadImage": PSBridgeLoadImage,
     "PSBridgeLoadMask": PSBridgeLoadMask,
     "PSBridgeSaveImage": PSBridgeSaveImage,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "PSBridgeLayerName": "PS Bridge · Layer Name",
     "PSBridgeLoadImage": "PS Bridge · Load Image",
     "PSBridgeLoadMask": "PS Bridge · Load Mask",
     "PSBridgeSaveImage": "PS Bridge · Save Image",
