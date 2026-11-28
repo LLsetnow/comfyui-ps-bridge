@@ -132,7 +132,11 @@ def _mask_asset(capture):
 
 
 def _input_preview(capture, kind, rect, make_image):
-    return publish_preview(make_image, key=(capture["capture_id"], kind, _source(capture), rect))
+    return publish_preview(
+        make_image,
+        key=(capture["capture_id"], kind, _source(capture), rect),
+        source_size=rect.size,
+    )
 
 
 def capture_preview(capture, kind):
