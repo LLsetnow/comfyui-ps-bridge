@@ -171,10 +171,10 @@ class PSBridgeLayerName:
 
 class PSBridgeLoadImage:
     CATEGORY = CATEGORY
-    DESCRIPTION = "Load pixels within the captured selection, or the whole active layer when there is no selection."
+    DESCRIPTION = "Load pixels within the captured selection, or the whole active layer when there is no selection. Also output a full-white mask with the same dimensions as the image."
     FUNCTION = "load_image"
-    RETURN_TYPES = ("IMAGE", FRAME_TYPE)
-    RETURN_NAMES = ("image", "frame")
+    RETURN_TYPES = ("IMAGE", FRAME_TYPE, "MASK")
+    RETURN_NAMES = ("image", "frame", "mask")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -195,7 +195,8 @@ class PSBridgeLoadImage:
         frame = PhotoshopFrame(run_id, bound_capture_id, _source(capture), Rect.from_asset(asset))
         image = _asset_image(asset, "RGB")
         preview = _input_preview(capture, "image", frame.rect, lambda: image)
-        return {"ui": {"images": [preview]}, "result": (_to_tensor(image), frame)}
+        mask = torch.ones((1, image.height, image.width), dtype=torch.float32)
+        return {"ui": {"images": [preview]}, "result": (_to_tensor(image), frame, mask)}
 
 
 class PSBridgeLoadMask:

@@ -24,7 +24,7 @@ Photoshop 桥接接口允许本机回环、局域网/内网（含 Tailscale 等 
 | 节点 | 设置 | 输出或效果 |
 | --- | --- | --- |
 | `PS Bridge · Layer Name` | 在多行文本框中输入图层名称 | 输出字符串，可连接到 `PS Bridge · Save Image` 的 `layer_name` 输入 |
-| `PS Bridge · Load Image` | 自动根据选区判断 | 有选区时读取选区外接矩形内的图像，否则读取整层图像。输出图像和 `frame`，在节点里显示图像预览 |
+| `PS Bridge · Load Image` | 自动根据选区判断 | 有选区时读取选区外接矩形内的图像，否则读取整层图像。输出图像、`frame` 和同尺寸全白 `mask`，在节点里显示图像预览 |
 | `PS Bridge · Load Mask` | 自动根据选区判断 | 有选区时读取选区蒙版并保留羽化，否则读取图层的像素蒙版。在节点里显示灰度预览 |
 | `PS Bridge · Save Image` | `image`、原始 `frame`、`layer_name`，可选 `mask` | 显示应用回贴蒙版后的图像预览。工作流成功后由 Photoshop 面板创建新图层 |
 
