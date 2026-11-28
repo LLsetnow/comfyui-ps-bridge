@@ -36,8 +36,13 @@ class PreviewStore:
         with self.lock:
             return self._get(filename, time.monotonic())
 
-    def publish(self, make_image, key=None):
+    def publish(self, make_image, key=None, source_size=None):
         name = uuid5(NAMESPACE_URL, repr(key)) if key is not None else uuid4()
+        # The native preview URL carries the caption dimensions with the PNG,
+        # including when ComfyUI restores an output from execution history.
+        if source_size is not None:
+            width, height = source_size
+            name = f"{name}_{width}x{height}"
         filename = f"{name}.png"
         descriptor = {"filename": filename, "subfolder": SUBFOLDER, "type": "temp"}
         if self.get(filename) is not None:

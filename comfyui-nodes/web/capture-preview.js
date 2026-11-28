@@ -1,5 +1,6 @@
 import { app } from '../../scripts/app.js'
 import { api } from '../../scripts/api.js'
+import { showSourcePreviewSize, watchSourcePreviewSizes } from './preview-size.js'
 
 const bridge = '/ps-bridge/v1'
 const nodeKinds = {
@@ -98,9 +99,13 @@ async function captureAndPreview(node) {
 
 app.registerExtension({
   name: 'PhotoshopBridge.CapturePreview',
+  setup() {
+    watchSourcePreviewSizes()
+  },
   nodeCreated(node) {
     if (!Object.hasOwn(nodeKinds, node.comfyClass)) return
     hideCaptureIdWidget(node)
+    showSourcePreviewSize(node)
     const widget = node.addWidget('button', captureLabel, null, () => { void captureAndPreview(node) }, { serialize: false })
     widget.serialize = false
   }
