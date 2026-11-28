@@ -2,6 +2,7 @@
 
 const { entrypoints } = require("uxp");
 const API_ROOT = "/ps-bridge/v1";
+const DEFAULT_ADDRESS = "127.0.0.1:8188";
 const sessionId = "ps-" + Date.now() + "-" + Math.random().toString(36).slice(2);
 const sessionQuery = "?session_id=" + encodeURIComponent(sessionId);
 const completedJobs = new Map();
@@ -29,7 +30,11 @@ function renderControls() {
   ui.connect.textContent = connection ? "断开" : "连接";
   ui.connect.disabled = busy;
   ui.capture.disabled = busy || !connection;
-  ui.address.disabled = busy || Boolean(connection);
+  if (busy || connection) {
+    ui.address.setAttribute("disabled", "");
+  } else {
+    ui.address.removeAttribute("disabled");
+  }
 }
 
 async function request(current, path, { body, binary = false, timeout = 8000 } = {}) {
@@ -82,9 +87,10 @@ function parseAddress(value) {
 }
 
 function restorePreferences() {
+  ui.address.value = DEFAULT_ADDRESS;
   try {
     const saved = localStorage.getItem("address") || localStorage.getItem("endpoint") || localStorage.getItem("port");
-    if (saved && !connection) ui.address.value = parseAddress(saved).display;
+    if (saved) ui.address.value = parseAddress(saved).display;
   } catch (_) {
     // Preference storage is optional. Manual connection is still available.
   }
@@ -104,15 +110,17 @@ async function toggleConnection() {
   status("正在连接 ComfyUI…");
   try {
     const current = parseAddress(ui.address.value);
-    await request(current, "/health");
     ui.address.value = current.display;
+    try {
+      localStorage.setItem("address", current.display);
+    } catch (_) {
+      // Keep the current value even if preference storage is unavailable.
+    }
+    await request(current, "/health");
     connection = current;
     pollFailed = false;
     ui.snapshot.textContent = "";
     status("已连接 · " + current.display, "good");
-    try {
-      localStorage.setItem("address", current.display);
-    } catch (_) {}
   } catch (error) {
     status("连接失败 · " + error.message, "error");
   } finally {
