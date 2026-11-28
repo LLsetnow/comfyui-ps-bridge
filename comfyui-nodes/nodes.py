@@ -51,10 +51,14 @@ class PhotoshopFrame:
 
 
 def _asset_image(asset, mode):
+    size = Rect.from_asset(asset).size
+    if "raw" in asset:
+        image = Image.frombytes(asset["mode"], size, asset["raw"])
+        return image if image.mode == mode else image.convert(mode)
     try:
         encoded = base64.b64decode(asset["png"], validate=True)
         with Image.open(io.BytesIO(encoded), formats=["PNG"]) as png:
-            if png.size != Rect.from_asset(asset).size:
+            if png.size != size:
                 raise ValueError("Photoshop image dimensions differ from its recorded bounds. Capture it again.")
             return png.convert(mode)
     except (binascii.Error, OSError, Image.DecompressionBombError) as exc:
@@ -83,6 +87,16 @@ def _to_tensor(image):
     return torch.from_numpy(np.asarray(image, dtype=np.float32) / 255.0).unsqueeze(0)
 
 
+def _asset_tensor(asset, channels):
+    expected_mode = "L" if channels == 1 else "RGB"
+    if "raw" in asset and asset.get("mode") == expected_mode:
+        width, height = Rect.from_asset(asset).size
+        shape = (height, width) if channels == 1 else (height, width, channels)
+        array = np.frombuffer(asset["raw"], dtype=np.uint8).reshape(shape)
+        return torch.from_numpy(array.astype(np.float32) / 255.0).unsqueeze(0)
+    return _to_tensor(_asset_image(asset, expected_mode))
+
+
 def _to_byte_pixels(tensor):
     array = tensor.detach().to(device="cpu", dtype=torch.float32).numpy()
     if not np.isfinite(array).all():
@@ -93,10 +107,12 @@ def _to_byte_pixels(tensor):
 def _image_bytes(image, size):
     if image.ndim != 4 or image.shape[0] != 1 or image.shape[-1] not in (3, 4) or min(image.shape[1:3]) < 1:
         raise ValueError("Photoshop Bridge Save Image requires one non-empty RGB or RGBA image. Select a single image from the batch.")
-    pixels = Image.fromarray(_to_byte_pixels(image[0])).convert("RGBA")
-    if pixels.size != size:
-        pixels = pixels.resize(size, Image.Resampling.LANCZOS)
-    return pixels.tobytes()
+    channels = int(image.shape[-1])
+    byte_pixels = _to_byte_pixels(image[0])
+    if image.shape[2] == size[0] and image.shape[1] == size[1]:
+        return np.ascontiguousarray(byte_pixels).tobytes(), channels
+    pixels = Image.fromarray(byte_pixels).resize(size, Image.Resampling.LANCZOS)
+    return pixels.tobytes(), channels
 
 
 def _mask_bytes(mask, size):
@@ -104,9 +120,10 @@ def _mask_bytes(mask, size):
         mask = mask[0]
     if mask.ndim != 2 or min(mask.shape) < 1:
         raise ValueError("Photoshop Bridge Save Image requires one non-empty mask. Select a single mask from the batch.")
-    pixels = Image.fromarray(_to_byte_pixels(mask))
-    if pixels.size != size:
-        pixels = pixels.resize(size, Image.Resampling.BILINEAR)
+    byte_pixels = _to_byte_pixels(mask)
+    if mask.shape[1] == size[0] and mask.shape[0] == size[1]:
+        return np.ascontiguousarray(byte_pixels).tobytes()
+    pixels = Image.fromarray(byte_pixels).resize(size, Image.Resampling.BILINEAR)
     return pixels.tobytes()
 
 
@@ -192,11 +209,12 @@ class PSBridgeLoadImage:
         run_id, bound_capture_id = get_prompt_binding(prompt, node_id)
         capture = get_capture(bound_capture_id)
         asset = _image_asset(capture)
-        frame = PhotoshopFrame(run_id, bound_capture_id, _source(capture), Rect.from_asset(asset))
-        image = _asset_image(asset, "RGB")
-        preview = _input_preview(capture, "image", frame.rect, lambda: image)
-        mask = torch.ones((1, image.height, image.width), dtype=torch.float32)
-        return {"ui": {"images": [preview]}, "result": (_to_tensor(image), frame, mask)}
+        rect = Rect.from_asset(asset)
+        frame = PhotoshopFrame(run_id, bound_capture_id, _source(capture), rect)
+        preview = _input_preview(capture, "image", rect, lambda: _asset_image(asset, "RGB"))
+        width, height = rect.size
+        mask = torch.ones((1, height, width), dtype=torch.float32)
+        return {"ui": {"images": [preview]}, "result": (_asset_tensor(asset, 3), frame, mask)}
 
 
 class PSBridgeLoadMask:
@@ -225,13 +243,19 @@ class PSBridgeLoadMask:
         run_id, bound_capture_id = get_prompt_binding(prompt, node_id)
         capture = get_capture(bound_capture_id)
         asset = _mask_asset(capture)
-        target = Rect.from_asset(asset)
+        source_rect = Rect.from_asset(asset)
+        target = source_rect
         if frame is not None:
             _require_frame(frame, run_id)
             target = frame.rect
-        mask = _load_mask(asset, target)
-        preview = _input_preview(capture, "mask", target, lambda: mask)
-        return {"ui": {"images": [preview]}, "result": (_to_tensor(mask),)}
+        if source_rect == target and "raw" in asset and asset.get("mode") == "L":
+            preview = _input_preview(capture, "mask", target, lambda: _asset_image(asset, "L"))
+            tensor = _asset_tensor(asset, 1)
+        else:
+            mask = _load_mask(asset, target)
+            preview = _input_preview(capture, "mask", target, lambda: mask)
+            tensor = _to_tensor(mask)
+        return {"ui": {"images": [preview]}, "result": (tensor,)}
 
 
 class PSBridgeSaveImage:
@@ -265,19 +289,24 @@ class PSBridgeSaveImage:
         if mask is None:
             source = MASK_FOR_IMAGE_SOURCE[frame.source]
             asset = capture["assets"][MASK_ASSET[source]]
-            mask_pixels = _load_mask(asset, frame.rect) if asset else Image.new("L", size, 255)
-            mask_data = mask_pixels.tobytes()
+            if asset is None:
+                mask_data = b"\xff" * (size[0] * size[1])
+            elif Rect.from_asset(asset) == frame.rect and "raw" in asset and asset.get("mode") == "L":
+                mask_data = asset["raw"]
+            else:
+                mask_data = _load_mask(asset, frame.rect).tobytes()
         else:
             mask_data = _mask_bytes(mask, size)
         layer_name = layer_name.replace("\0", " ").replace("\r", " ").replace("\n", " ").strip()[:160]
-        rgba = _image_bytes(image, size)
-        preview = publish_preview(lambda: result_preview(size, rgba, mask_data))
+        pixels, channels = _image_bytes(image, size)
         stage_result(run_id, frame.capture_id, node_id, {
             "rect": frame.rect.as_dict(),
             "layer_name": layer_name or "ComfyUI Result",
-            "rgba": rgba,
+            "rgba": pixels,
+            "channels": channels,
             "mask": mask_data,
         })
+        preview = publish_preview(lambda: result_preview(size, pixels, mask_data, channels=channels))
         return {"ui": {"images": [preview]}}
 
 

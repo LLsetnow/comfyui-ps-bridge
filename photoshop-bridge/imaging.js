@@ -7,6 +7,56 @@ const SRGB = "sRGB IEC61966-2.1";
 const GRAY = "Gray Gamma 2.2";
 const MAX_PIXELS = 32 * 1024 * 1024;
 
+let lut16To8 = null;
+let lut8To16 = null;
+let lut8ToLinear = null;
+let lut8ToAlpha = null;
+
+function getLut16To8() {
+  if (lut16To8) return lut16To8;
+  lut16To8 = new Uint8Array(32769);
+  for (let i = 0; i <= 32768; i++) {
+    lut16To8[i] = Math.min(255, Math.round(i * 255 / 32768));
+  }
+  return lut16To8;
+}
+
+function getLut8To16() {
+  if (lut8To16) return lut8To16;
+  lut8To16 = new Uint16Array(256);
+  for (let i = 0; i < 256; i++) {
+    lut8To16[i] = Math.round(i * 32768 / 255);
+  }
+  return lut8To16;
+}
+
+function getLut8ToLinear() {
+  if (lut8ToLinear) return lut8ToLinear;
+  lut8ToLinear = new Float32Array(256);
+  for (let i = 0; i < 256; i++) {
+    lut8ToLinear[i] = srgbToLinear(i / 255);
+  }
+  return lut8ToLinear;
+}
+
+function getLut8ToAlpha() {
+  if (lut8ToAlpha) return lut8ToAlpha;
+  lut8ToAlpha = new Float32Array(256);
+  for (let i = 0; i < 256; i++) {
+    lut8ToAlpha[i] = i / 255;
+  }
+  return lut8ToAlpha;
+}
+
+function intersectRect(a, b) {
+  if (!a || !b) return null;
+  const left = Math.max(a.left, b.left);
+  const top = Math.max(a.top, b.top);
+  const right = Math.min(a.right, b.right);
+  const bottom = Math.min(a.bottom, b.bottom);
+  return right > left && bottom > top ? { left, top, right, bottom } : null;
+}
+
 function pixelValue(value) {
   if (value && typeof value._value === "number") return value._value;
   return Number(value);
@@ -51,16 +101,37 @@ function componentSize(doc) {
 
 function normalize8(data, depth, components, color) {
   if (data instanceof Uint8Array) return data;
-  const scale = depth === 16 ? 255 / 32768 : 255;
-  return Uint8Array.from(data, (sample, index) => {
-    if (depth === 32 && color && index % components < 3) {
+  const out = new Uint8Array(data.length);
+  if (depth === 16) {
+    const lut = getLut16To8();
+    for (let i = 0; i < data.length; i++) {
+      const sample = data[i];
+      out[i] = sample <= 0 ? 0 : sample >= 32768 ? 255 : lut[sample | 0];
+    }
+    return out;
+  }
+  const scale = 255;
+  for (let i = 0; i < data.length; i++) {
+    let sample = data[i];
+    if (depth === 32 && color && i % components < 3) {
       sample = sample <= 0.0031308 ? sample * 12.92 : 1.055 * Math.pow(sample, 1 / 2.4) - 0.055;
     }
-    return Math.min(255, Math.max(0, Math.round(sample * scale)));
-  });
+    const scaled = Math.round(sample * scale);
+    out[i] = scaled <= 0 ? 0 : scaled >= 255 ? 255 : scaled;
+  }
+  return out;
 }
 
 function reframe(pixels, source, target, inChannels, outChannels) {
+  if (
+    inChannels === outChannels
+    && source.left === target.left
+    && source.top === target.top
+    && source.right === target.right
+    && source.bottom === target.bottom
+  ) {
+    return pixels;
+  }
   const width = rectWidth(target);
   const height = rectHeight(target);
   const sourceWidth = rectWidth(source);
@@ -77,12 +148,25 @@ function reframe(pixels, source, target, inChannels, outChannels) {
       output.set(pixels.subarray(read, read + (right - left) * inChannels), write);
       continue;
     }
+    if (outChannels === 3 && inChannels === 4) {
+      for (let x = left; x < right; x++) {
+        output[write] = pixels[read];
+        output[write + 1] = pixels[read + 1];
+        output[write + 2] = pixels[read + 2];
+        read += 4;
+        write += 3;
+      }
+      continue;
+    }
     for (let x = left; x < right; x++) {
-      output[write] = pixels[read];
-      if (outChannels === 4) {
-        output[write + 1] = inChannels >= 3 ? pixels[read + 1] : pixels[read];
-        output[write + 2] = inChannels >= 3 ? pixels[read + 2] : pixels[read];
-        output[write + 3] = inChannels === 2 ? pixels[read + 1] : 255;
+      const first = pixels[read];
+      output[write] = first;
+      if (outChannels >= 3) {
+        output[write + 1] = inChannels >= 3 ? pixels[read + 1] : first;
+        output[write + 2] = inChannels >= 3 ? pixels[read + 2] : first;
+        if (outChannels === 4) {
+          output[write + 3] = inChannels === 2 ? pixels[read + 1] : 255;
+        }
       }
       read += inChannels;
       write += outChannels;
@@ -100,14 +184,16 @@ async function readPixels(result, rect, channels) {
       right: pixelValue(result.sourceBounds.left) + image.width,
       bottom: pixelValue(result.sourceBounds.top) + image.height
     };
-    const pixels = normalize8(await image.getData({ chunky: true }), image.componentSize, image.components, channels === 4);
+    const pixels = normalize8(await image.getData({ chunky: true }), image.componentSize, image.components, channels >= 3);
     return reframe(pixels, source, rect, image.components, channels);
   } finally {
     image.dispose();
   }
 }
 
-async function capturePhotoshop(sessionId) {
+async function capturePhotoshop(sessionId, options = {}) {
+  const imageChannels = options.imageChannels === 4 ? 4 : 3;
+  const selectionOnly = options.selectionOnly !== false;
   return core.executeAsModal(async () => {
     const doc = app.documents.length ? app.activeDocument : null;
     if (!doc) throw new Error("请打开 Photoshop 文档");
@@ -126,21 +212,51 @@ async function capturePhotoshop(sessionId) {
     const selectionRect = pixelRect(doc.selection && doc.selection.bounds, canvas);
     checkCaptureSize(layerRect);
     checkCaptureSize(selectionRect);
+    const depth = componentSize(doc);
     const layerOptions = { documentID: doc.id, layerID: layer.id };
-    const layerPixels = await readPixels(await imaging.getPixels({
-      ...layerOptions,
-      sourceBounds: layerRect,
-      colorSpace: "RGB",
-      colorProfile: SRGB,
-      componentSize: componentSize(doc),
-      applyAlpha: false
-    }), layerRect, 4);
-    const layerMask = properties.hasUserMask ? await readPixels(await imaging.getLayerMask({
-      ...layerOptions, kind: "user", sourceBounds: layerRect
-    }), layerRect, 1) : null;
-    const selectionMask = selectionRect ? await readPixels(await imaging.getSelection({
-      documentID: doc.id, sourceBounds: selectionRect
-    }), selectionRect, 1) : null;
+
+    let layerPixels = null;
+    let layerMask = null;
+    let selectionPixels = null;
+    let selectionMask = null;
+
+    if (selectionRect && selectionOnly) {
+      const overlap = intersectRect(layerRect, selectionRect);
+      if (overlap) {
+        selectionPixels = await readPixels(await imaging.getPixels({
+          ...layerOptions,
+          sourceBounds: overlap,
+          colorSpace: "RGB",
+          colorProfile: SRGB,
+          componentSize: depth,
+          applyAlpha: false
+        }), selectionRect, imageChannels);
+      } else {
+        selectionPixels = new Uint8Array(rectWidth(selectionRect) * rectHeight(selectionRect) * imageChannels);
+      }
+      selectionMask = await readPixels(await imaging.getSelection({
+        documentID: doc.id, sourceBounds: selectionRect
+      }), selectionRect, 1);
+    } else {
+      layerPixels = await readPixels(await imaging.getPixels({
+        ...layerOptions,
+        sourceBounds: layerRect,
+        colorSpace: "RGB",
+        colorProfile: SRGB,
+        componentSize: depth,
+        applyAlpha: false
+      }), layerRect, imageChannels);
+      layerMask = properties.hasUserMask ? await readPixels(await imaging.getLayerMask({
+        ...layerOptions, kind: "user", sourceBounds: layerRect
+      }), layerRect, 1) : null;
+      if (selectionRect) {
+        selectionPixels = reframe(layerPixels, layerRect, selectionRect, imageChannels, imageChannels);
+        selectionMask = await readPixels(await imaging.getSelection({
+          documentID: doc.id, sourceBounds: selectionRect
+        }), selectionRect, 1);
+      }
+    }
+
     return {
       session_id: sessionId,
       document_id: String(doc.id),
@@ -152,13 +268,9 @@ async function capturePhotoshop(sessionId) {
       layer_rect: layerRect,
       selection_rect: selectionRect,
       assets: {
-        layer_image: { rect: layerRect, pixels: layerPixels, channels: 4 },
+        layer_image: layerPixels ? { rect: layerRect, pixels: layerPixels, channels: imageChannels } : null,
         layer_mask: layerMask ? { rect: layerRect, pixels: layerMask, channels: 1 } : null,
-        selection_image: selectionRect ? {
-          rect: selectionRect,
-          pixels: reframe(layerPixels, layerRect, selectionRect, 4, 4),
-          channels: 4
-        } : null,
+        selection_image: selectionPixels ? { rect: selectionRect, pixels: selectionPixels, channels: imageChannels } : null,
         selection_mask: selectionMask ? { rect: selectionRect, pixels: selectionMask, channels: 1 } : null
       }
     };
@@ -182,12 +294,59 @@ function srgbToLinear(value) {
   return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
 }
 
-async function writeResult(doc, layer, job, rgba, mask) {
+function toNativeRgbaBuffer(pixels, pixelCount, depth) {
+  const channels = pixels.length === pixelCount * 3 ? 3 : 4;
+  if (depth === 8) {
+    if (channels === 4) return pixels;
+    const out = new Uint8Array(pixelCount * 4);
+    for (let s = 0, d = 0; s < pixels.length; s += 3, d += 4) {
+      out[d] = pixels[s];
+      out[d + 1] = pixels[s + 1];
+      out[d + 2] = pixels[s + 2];
+      out[d + 3] = 255;
+    }
+    return out;
+  }
+  if (depth === 16) {
+    const lut = getLut8To16();
+    const out = new Uint16Array(pixelCount * 4);
+    if (channels === 4) {
+      for (let i = 0; i < out.length; i++) out[i] = lut[pixels[i]];
+    } else {
+      for (let s = 0, d = 0; s < pixels.length; s += 3, d += 4) {
+        out[d] = lut[pixels[s]];
+        out[d + 1] = lut[pixels[s + 1]];
+        out[d + 2] = lut[pixels[s + 2]];
+        out[d + 3] = 32768;
+      }
+    }
+    return out;
+  }
+  const lutColor = getLut8ToLinear();
+  const lutAlpha = getLut8ToAlpha();
+  const out = new Float32Array(pixelCount * 4);
+  if (channels === 4) {
+    for (let i = 0; i < out.length; i += 4) {
+      out[i] = lutColor[pixels[i]];
+      out[i + 1] = lutColor[pixels[i + 1]];
+      out[i + 2] = lutColor[pixels[i + 2]];
+      out[i + 3] = lutAlpha[pixels[i + 3]];
+    }
+  } else {
+    for (let s = 0, d = 0; s < pixels.length; s += 3, d += 4) {
+      out[d] = lutColor[pixels[s]];
+      out[d + 1] = lutColor[pixels[s + 1]];
+      out[d + 2] = lutColor[pixels[s + 2]];
+      out[d + 3] = 1;
+    }
+  }
+  return out;
+}
+
+async function writeResult(doc, layer, job, pixels, mask) {
   const depth = componentSize(doc);
-  let buffer = rgba;
   // Photoshop expects native-depth RGBA to preserve alpha when writing pixels.
-  if (depth === 16) buffer = Uint16Array.from(rgba, sample => Math.round(sample * 32768 / 255));
-  if (depth === 32) buffer = Float32Array.from(rgba, (sample, index) => index % 4 === 3 ? sample / 255 : srgbToLinear(sample / 255));
+  const buffer = toNativeRgbaBuffer(pixels, job.width * job.height, depth);
 
   const scope = {
     documentID: doc.id, layerID: layer.id,
