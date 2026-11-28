@@ -51,9 +51,9 @@ class PreviewStore:
         width, height = image.size
         if width > THUMBNAIL_SIZE[0] or height > THUMBNAIL_SIZE[1]:
             image = image.copy()
-            image.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+            image.thumbnail(THUMBNAIL_SIZE, Image.Resampling.BILINEAR)
         output = io.BytesIO()
-        image.save(output, format="PNG", compress_level=3)
+        image.save(output, format="PNG", compress_level=1)
         data = output.getvalue()
         with self.lock:
             now = time.monotonic()
@@ -72,9 +72,13 @@ get_preview = _PREVIEWS.get
 publish_preview = _PREVIEWS.publish
 
 
-def result_preview(size, rgba, mask):
-    image = Image.frombytes("RGBA", size, rgba)
-    image.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-    alpha = Image.frombytes("L", size, mask).resize(image.size, Image.Resampling.LANCZOS)
-    image.putalpha(ImageChops.multiply(image.getchannel("A"), alpha))
+def result_preview(size, pixels, mask, channels=4):
+    mode = "RGB" if channels == 3 else "RGBA"
+    image = Image.frombytes(mode, size, pixels)
+    image.thumbnail(THUMBNAIL_SIZE, Image.Resampling.BILINEAR)
+    alpha = Image.frombytes("L", size, mask).resize(image.size, Image.Resampling.BILINEAR)
+    if channels == 3:
+        image.putalpha(alpha)
+    else:
+        image.putalpha(ImageChops.multiply(image.getchannel("A"), alpha))
     return image

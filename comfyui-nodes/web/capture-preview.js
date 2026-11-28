@@ -27,10 +27,13 @@ async function requestCapture() {
   })
   const deadline = Date.now() + 137000
   while (Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 650))
-    const state = await bridgeRequest('/capture-requests/' + encodeURIComponent(id))
+    const startedAt = Date.now()
+    const state = await bridgeRequest('/capture-requests/' + encodeURIComponent(id) + '?wait=15')
     if (state.error) throw new Error(state.error)
     if (state.capture_id) return state.capture_id
+    if (Date.now() - startedAt < 250) {
+      await new Promise(resolve => setTimeout(resolve, 250))
+    }
   }
   throw new Error('等待 Photoshop 捕获超时，请确认桥接面板可见。')
 }

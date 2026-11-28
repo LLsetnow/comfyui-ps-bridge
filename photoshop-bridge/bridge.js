@@ -3,6 +3,8 @@
 const { entrypoints } = require("uxp");
 const API_ROOT = "/ps-bridge/v1";
 const DEFAULT_ADDRESS = "127.0.0.1:8188";
+const LONG_POLL_SECONDS = 10;
+const LONG_POLL_TIMEOUT_MS = 18000;
 const sessionId = "ps-" + Date.now() + "-" + Math.random().toString(36).slice(2);
 const sessionQuery = "?session_id=" + encodeURIComponent(sessionId);
 const completedJobs = new Map();
@@ -20,6 +22,7 @@ let busy = false;
 let polling = false;
 let pollFailed = false;
 let pollTimer = null;
+let pollAbortController = null;
 
 function status(message, state = "") {
   ui.status.textContent = message;
@@ -37,18 +40,32 @@ function renderControls() {
   }
 }
 
-async function request(current, path, { body, binary = false, timeout = 8000 } = {}) {
+async function request(current, path, { body, binary = false, timeout = 8000, signal = null } = {}) {
   const controller = typeof AbortController === "function" ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => controller.abort(), timeout) : null;
+  if (signal && signal.aborted) {
+    const aborted = new Error("Aborted");
+    aborted.name = "AbortError";
+    throw aborted;
+  }
+  const onAbort = controller && signal ? () => controller.abort() : null;
+  if (onAbort) signal.addEventListener("abort", onAbort, { once: true });
+  const timer = controller && timeout > 0 ? setTimeout(() => controller.abort(), timeout) : null;
   const headers = {};
-  if (body) headers["Content-Type"] = "application/json";
+  let payload;
+  if (body instanceof Uint8Array) {
+    headers["Content-Type"] = "application/octet-stream";
+    payload = body;
+  } else if (body !== undefined && body !== null) {
+    headers["Content-Type"] = "application/json";
+    payload = JSON.stringify(body);
+  }
   try {
     const response = await fetch(current.endpoint + API_ROOT + path, {
-      method: body ? "POST" : "GET",
+      method: payload !== undefined ? "POST" : "GET",
       headers,
       credentials: "omit",
       redirect: "error",
-      ...(body ? { body: JSON.stringify(body) } : {}),
+      ...(payload !== undefined ? { body: payload } : {}),
       ...(controller ? { signal: controller.signal } : {})
     });
     if (!response.ok) {
@@ -61,6 +78,7 @@ async function request(current, path, { body, binary = false, timeout = 8000 } =
     return binary ? new Uint8Array(await response.arrayBuffer()) : await response.json();
   } finally {
     if (timer) clearTimeout(timer);
+    if (onAbort) signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -96,11 +114,18 @@ function restorePreferences() {
   }
 }
 
+function notifyDisconnect(current) {
+  if (!current || !current.supportsLongPoll) return;
+  void request(current, "/sessions/bye", { body: { session_id: sessionId }, timeout: 1500 }).catch(() => {});
+}
+
 async function toggleConnection() {
   if (busy) return;
   if (connection) {
+    const previous = connection;
     connection = null;
     stopPolling();
+    notifyDisconnect(previous);
     status("已断开");
     renderControls();
     return;
@@ -116,7 +141,11 @@ async function toggleConnection() {
     } catch (_) {
       // Keep the current value even if preference storage is unavailable.
     }
-    await request(current, "/health");
+    const info = await request(current, "/health");
+    const capabilities = new Set(Array.isArray(info && info.capabilities) ? info.capabilities : []);
+    current.supportsBinaryCapture = capabilities.has("binary_capture_v1");
+    current.supportsJobBundle = capabilities.has("job_bundle_v1");
+    current.supportsLongPoll = capabilities.has("long_poll_v1");
     connection = current;
     pollFailed = false;
     ui.snapshot.textContent = "";
@@ -143,24 +172,40 @@ async function captureCurrentLayer(requestId = null) {
   if (busy || !connection) return;
   const current = connection;
   busy = true;
+  stopPolling();
   renderControls();
   status("正在捕获 Photoshop 图层…");
   try {
-    const snapshot = await capturePhotoshop(sessionId);
-    const assets = {};
-    for (const [mode, asset] of Object.entries(snapshot.assets)) {
-      assets[mode] = asset ? {
-        rect: asset.rect,
-        png: bytesToBase64(_encodePng(asset.pixels, rectWidth(asset.rect), rectHeight(asset.rect), asset.channels))
-      } : null;
+    if (current.supportsBinaryCapture) {
+      const snapshot = await capturePhotoshop(sessionId, { selectionOnly: true, imageChannels: 3 });
+      const encodedAssets = {};
+      await Promise.all(Object.entries(snapshot.assets).map(async ([mode, asset]) => {
+        encodedAssets[mode] = asset ? await encodeBinaryAsset(asset) : null;
+      }));
+      if (requestId) snapshot.request_id = requestId;
+      const packet = buildCapturePacket(snapshot, encodedAssets);
+      await request(current, "/captures", { body: packet, timeout: 120000 });
+      const selection = snapshot.selection_rect;
+      const rect = selection || snapshot.layer_rect;
+      const dimensions = rectWidth(rect) + " × " + rectHeight(rect);
+      ui.snapshot.textContent = snapshot.layer_name + " · " + (selection ? "选区 " : "图层 ") + dimensions;
+    } else {
+      const snapshot = await capturePhotoshop(sessionId, { selectionOnly: false, imageChannels: 4 });
+      const assets = {};
+      for (const [mode, asset] of Object.entries(snapshot.assets)) {
+        assets[mode] = asset ? {
+          rect: asset.rect,
+          png: bytesToBase64(_encodePng(asset.pixels, rectWidth(asset.rect), rectHeight(asset.rect), asset.channels))
+        } : null;
+      }
+      const body = { ...snapshot, assets };
+      if (requestId) body.request_id = requestId;
+      await request(current, "/captures", { body, timeout: 120000 });
+      const selection = snapshot.selection_rect;
+      const rect = selection || snapshot.layer_rect;
+      const dimensions = rectWidth(rect) + " × " + rectHeight(rect);
+      ui.snapshot.textContent = snapshot.layer_name + " · " + (selection ? "选区 " : "图层 ") + dimensions;
     }
-    const body = { ...snapshot, assets };
-    if (requestId) body.request_id = requestId;
-    await request(current, "/captures", { body, timeout: 120000 });
-    const selection = snapshot.selection_rect;
-    const rect = selection || snapshot.layer_rect;
-    const dimensions = rectWidth(rect) + " × " + rectHeight(rect);
-    ui.snapshot.textContent = snapshot.layer_name + " · " + (selection ? "选区 " : "图层 ") + dimensions;
     status("已捕获 · 可在 ComfyUI 运行工作流", "good");
   } catch (error) {
     ui.snapshot.textContent = "";
@@ -184,10 +229,20 @@ async function captureCurrentLayer(requestId = null) {
 function stopPolling() {
   if (pollTimer !== null) clearTimeout(pollTimer);
   pollTimer = null;
+  if (pollAbortController) {
+    const controller = pollAbortController;
+    pollAbortController = null;
+    controller.abort();
+  }
 }
 
 function schedulePoll(delay = 1600) {
-  if (!visible || !connection || polling || pollTimer !== null) return;
+  if (!visible || !connection || polling) return;
+  if (pollTimer !== null) {
+    if (delay > 0) return;
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
   pollTimer = setTimeout(poll, delay);
 }
 
@@ -213,15 +268,30 @@ async function applyJob(current, job) {
       targetError = error;
     }
     if (!targetError) {
-      const [rgba, mask] = await Promise.all([
-        request(current, route + "/pixels" + sessionQuery, { binary: true, timeout: 120000 }),
-        request(current, route + "/mask" + sessionQuery, { binary: true, timeout: 120000 })
-      ]);
-      if (!visible || current !== connection) return;
+      const size = job.width * job.height;
+      const expectedChannels = job.channels === 3 ? 3 : 4;
+      let pixels;
+      let mask;
+      if (current.supportsJobBundle) {
+        const bundle = await request(current, route + "/bundle" + sessionQuery, { binary: true, timeout: 120000 });
+        if (!visible || current !== connection) return;
+        const decoded = parseDeliveryBundle(bundle, job.width, job.height);
+        pixels = decoded.pixels;
+        mask = decoded.mask;
+      } else {
+        const [rawPixels, rawMask] = await Promise.all([
+          request(current, route + "/pixels" + sessionQuery, { binary: true, timeout: 120000 }),
+          request(current, route + "/mask" + sessionQuery, { binary: true, timeout: 120000 })
+        ]);
+        if (!visible || current !== connection) return;
+        if (rawPixels.length !== size * expectedChannels || rawMask.length !== size) {
+          throw new Error("回贴的图像或蒙版数据长度不符");
+        }
+        pixels = rawPixels;
+        mask = rawMask;
+      }
       try {
-        const size = job.width * job.height;
-        if (rgba.length !== size * 4 || mask.length !== size) throw new Error("回贴的图像或蒙版数据长度不符");
-        layerId = await importPhotoshop(job, rgba, mask);
+        layerId = await importPhotoshop(job, pixels, mask);
       } catch (error) {
         // Modal collisions and cancellation can be retried without a layer.
         if (Number(error.number) === 9 || Number(error.number) === -128) throw error;
@@ -245,13 +315,23 @@ async function applyJob(current, job) {
 async function poll() {
   pollTimer = null;
   if (!visible || !connection || busy) {
-    schedulePoll();
+    if (!busy) schedulePoll();
     return;
   }
   const current = connection;
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  pollAbortController = controller;
   polling = true;
+  let fastEmptyReturn = false;
   try {
-    const { job, capture_request: captureRequest } = await request(current, "/jobs/pending" + sessionQuery + "&capture_requests=1");
+    const startedAt = Date.now();
+    const pollQuery = current.supportsLongPoll
+      ? "/jobs/pending" + sessionQuery + "&capture_requests=1&wait=" + LONG_POLL_SECONDS
+      : "/jobs/pending" + sessionQuery + "&capture_requests=1";
+    const { job, capture_request: captureRequest } = await request(current, pollQuery, {
+      timeout: current.supportsLongPoll ? LONG_POLL_TIMEOUT_MS : 8000,
+      signal: controller ? controller.signal : null
+    });
     if (!visible || connection !== current || busy) return;
     if (pollFailed) status("连接已恢复 · " + current.display, "good");
     pollFailed = false;
@@ -259,7 +339,10 @@ async function poll() {
       await captureCurrentLayer(captureRequest.id);
       return;
     }
-    if (!job) return;
+    if (!job) {
+      fastEmptyReturn = current.supportsLongPoll && Date.now() - startedAt < 250;
+      return;
+    }
     busy = true;
     renderControls();
     status("正在回贴 ComfyUI 结果…");
@@ -270,12 +353,17 @@ async function poll() {
       renderControls();
     }
   } catch (error) {
+    if (controller && controller.signal.aborted) return;
     if (connection !== current || !visible || busy) return;
     pollFailed = true;
     status("等待回贴 · " + error.message, "error");
   } finally {
+    if (pollAbortController === controller) pollAbortController = null;
     polling = false;
-    schedulePoll(pollFailed ? 3500 : undefined);
+    if (!busy) {
+      const nextDelay = pollFailed ? 3500 : (current.supportsLongPoll ? (fastEmptyReturn ? 250 : 0) : undefined);
+      schedulePoll(nextDelay);
+    }
   }
 }
 
@@ -292,10 +380,12 @@ entrypoints.setup({
       hide() {
         visible = false;
         stopPolling();
+        notifyDisconnect(connection);
       },
       destroy() {
         visible = false;
         stopPolling();
+        notifyDisconnect(connection);
       }
     }
   }
